@@ -20,7 +20,7 @@ def check_password():
         user_input = st.text_input("👤 管理員帳號", value="")
         password_input = st.text_input("🔑 密碼", type="password")
         if st.button("🚀 確認登入"):
-            if user_input == "pe_teacher" and password_input == "114fit":
+            if user_input == "tienline" and password_input == "641101":
                 st.session_state["password_correct"] = True
                 st.rerun()
             else:
