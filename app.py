@@ -38,7 +38,7 @@ NORMS = {
     },
     "坐姿體前彎": {
         "男": {13: {"金": 33, "銀": 30, "銅": 24, "中": 18}, 14: {"金": 34, "銀": 31, "銅": 25, "中": 18}, 15: {"金": 35, "銀": 32, "銅": 25, "中": 18}, 16: {"金": 36, "銀": 33, "銅": 26, "中": 18}},
-        "女": {13: {"金": 39, "銀": 35, "銅": 30, "中": 24}, 14: {"金": 40, "銀": 37, "銅": 30, "中": 23}, 15: {"金": 42, "銀": 38, "銅": 31, "中": 25}, 16: {"金": 42, "銀": 39, "銅": 32, "傳": 24}}
+        "女": {13: {"金": 39, "銀": 35, "銅": 30, "中": 24}, 14: {"金": 40, "銀": 37, "銅": 30, "中": 23}, 15: {"金": 42, "銀": 38, "銅": 31, "中": 25}, 16: {"金": 42, "銀": 39, "銅": 32, "中": 24}}
     },
     "立定跳遠": {
         "男": {13: {"金": 200, "銀": 190, "銅": 170, "中": 148}, 14: {"金": 213, "銀": 203, "銅": 185, "中": 165}, 15: {"金": 221, "銀": 213, "銅": 195, "中": 175}, 16: {"金": 230, "銀": 220, "銅": 200, "中": 180}},
@@ -78,29 +78,27 @@ def judge_medal(item, gender, age, value):
 
 # --- 3. 資料讀取 ---
 conn = st.connection("gsheets", type=GSheetsConnection)
-scores_df = conn.read(worksheet="Scores", ttl="0s").astype(str)
-student_list = conn.read(worksheet="Student_List", ttl="0s").astype(str)
+# 修正處：讀取後統一對整個 DataFrame 執行 clean_numeric_string，避免 809.0 這種情況出現
+scores_df = conn.read(worksheet="Scores", ttl="0s").astype(str).map(clean_numeric_string)
+student_list = conn.read(worksheet="Student_List", ttl="0s").astype(str).map(clean_numeric_string)
 
 # --- 4. 側邊欄 (新增座號選取) ---
 st.sidebar.header("📂 學生資訊選取")
 if not student_list.empty:
-    # 選擇班級
-    class_list = student_list['班級'].apply(clean_numeric_string).unique()
+    class_list = student_list['班級'].unique()
     sel_class = st.sidebar.selectbox("🏫 選擇班級", class_list)
     
-    # 過濾該班學生
-    class_students = student_list[student_list['班級'].apply(clean_numeric_string) == sel_class]
+    class_students = student_list[student_list['班級'] == sel_class]
     
-    # 【外加功能：選擇座號】
-    no_list = class_students['座號'].apply(clean_numeric_string).sort_values(key=lambda x: x.astype(int)).unique()
+    # 座號清單
+    no_list = class_students['座號'].sort_values(key=lambda x: x.astype(int)).unique()
     sel_no = st.sidebar.selectbox("🔢 選擇學生座號", no_list)
     
-    # 根據座號自動連動姓名
-    students = class_students[class_students['座號'].apply(clean_numeric_string) == sel_no]
+    students = class_students[class_students['座號'] == sel_no]
     sel_name = st.sidebar.selectbox("👤 選擇學生姓名", students['姓名'])
     
     stu = students[students['姓名'] == sel_name].iloc[0]
-    st.sidebar.info(f"📌 性別：{stu['性別']} | 年齡：{clean_numeric_string(stu['年齡'])}歲")
+    st.sidebar.info(f"📌 性別：{stu['性別']} | 年齡：{stu['年齡']}歲")
 else:
     st.error("❌ 找不到學生名單，請檢查試算表。")
     st.stop()
@@ -128,7 +126,6 @@ if mode == "一般術科測驗":
         final_score = clean_numeric_string(val_input)
     note = st.text_input("💬 備註", "")
 
-    # --- 【外加功能：類別成績檢閱】 ---
     st.markdown("---")
     st.markdown(f"##### 📋 {sel_name} - {test_cat} 類別已測驗項目檢閱")
     cat_history = scores_df[(scores_df['姓名'] == sel_name) & (scores_df['測驗類別'] == test_cat)]
@@ -180,7 +177,7 @@ elif mode == "📊 數據報表查詢":
             st.info(f"💡 目前尚未有 {sel_name} 的測驗紀錄。")
     with tab2:
         st.subheader(f"📂 {sel_class} 班級成績彙整")
-        class_data = scores_df[scores_df['班級'].apply(clean_numeric_string) == sel_class].copy()
+        class_data = scores_df[scores_df['班級'] == sel_class].copy()
         if not class_data.empty:
             all_items = class_data['項目'].unique()
             selected_report_item = st.selectbox("🎯 篩選單項檢視", ["顯示全部"] + list(all_items))
@@ -224,7 +221,9 @@ if mode in ["一般術科測驗", "114年體適能"]:
             new_row = pd.DataFrame([new_data])
             updated_df = pd.concat([scores_df, new_row], ignore_index=True)
             msg = f"✅ 已成功「新增」{sel_name} 的成績紀錄！"
-        updated_df['班級'] = updated_df['班級'].apply(clean_numeric_string)
+        
+        # 修正處：存檔前再次確保 DataFrame 內的所有數值都沒有 .0
+        updated_df = updated_df.map(clean_numeric_string)
         conn.update(worksheet="Scores", data=updated_df)
         st.balloons()
         st.success(msg)
