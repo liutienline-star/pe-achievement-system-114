@@ -93,7 +93,7 @@ if not student_list.empty:
     sel_name = st.sidebar.selectbox("👤 選擇學生姓名", students['姓名'])
     
     stu = students[students['姓名'] == sel_name].iloc[0]
-    st.sidebar.info(f"📌 性別：{stu['性別']} | 年齡：{clean_numeric_string(stu['齡'])}歲")
+    st.sidebar.info(f"📌 性別：{stu['性別']} | 年齡：{clean_numeric_string(stu['年齡'])}歲")
 else:
     st.error("❌ 找不到學生名單，請檢查試算表。")
     st.stop()
