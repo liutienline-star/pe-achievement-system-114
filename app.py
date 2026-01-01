@@ -94,7 +94,7 @@ else:
     st.error("❌ 找不到學生名單，請檢查試算表。")
     st.stop()
 
-# --- 5. 主介面 (模式新增：數據報表查詢) ---
+# --- 5. 主介面 ---
 st.title(f"🏆 114學年度體育成績管理系統")
 mode = st.radio("🎯 功能切換", ["一般術科測驗", "114年體適能", "📊 數據報表查詢"], horizontal=True)
 
@@ -116,6 +116,17 @@ if mode == "一般術科測驗":
         val_input = st.text_input("📊 輸入數值", "85")
         final_score = clean_numeric_string(val_input)
     note = st.text_input("💬 備註", "")
+
+    # --- 【外加功能：類別成績檢閱】 ---
+    st.markdown("---")
+    st.markdown(f"##### 📋 {sel_name} - {test_cat} 類別已測驗項目檢閱")
+    # 過濾出該生在該類別下的歷史紀錄
+    cat_history = scores_df[(scores_df['姓名'] == sel_name) & (scores_df['測驗類別'] == test_cat)]
+    if not cat_history.empty:
+        st.dataframe(cat_history[['項目', '成績', '等第/獎牌', '紀錄時間']], use_container_width=True)
+    else:
+        st.info(f"💡 目前尚無 {test_cat} 類別的歷史紀錄。")
+    # ----------------------------
 
 elif mode == "114年體適能":
     test_cat = "體適能"
@@ -144,7 +155,7 @@ elif mode == "114年體適能":
         test_item, fmt, final_score = "體適能免測", "特殊判定", "N/A"
         final_medal, note = ("銅牌" if "身障" in status else "待加強"), status
 
-# --- 數據報表查詢 (外加功能區) ---
+# --- 數據報表查詢 ---
 elif mode == "📊 數據報表查詢":
     tab1, tab2 = st.tabs(["👤 個人成績單", "👥 班級總覽"])
     
@@ -152,11 +163,8 @@ elif mode == "📊 數據報表查詢":
         st.subheader(f"🔍 {sel_name} 的個人測驗紀錄")
         personal_data = scores_df[scores_df['姓名'] == sel_name].copy()
         if not personal_data.empty:
-            # 依類別排序方便閱讀
             personal_data = personal_data.sort_values(by="測驗類別")
             st.dataframe(personal_data[['測驗類別', '項目', '成績', '等第/獎牌', '紀錄時間', '備註']], use_container_width=True)
-            
-            # 簡單視覺化：獎牌分佈
             st.write("📈 獎牌/等第統計：")
             medal_counts = personal_data['等第/獎牌'].value_counts()
             st.bar_chart(medal_counts)
@@ -166,26 +174,20 @@ elif mode == "📊 數據報表查詢":
     with tab2:
         st.subheader(f"📂 {sel_class} 班級成績彙整")
         class_data = scores_df[scores_df['班級'].apply(clean_numeric_string) == sel_class].copy()
-        
         if not class_data.empty:
             all_items = class_data['項目'].unique()
             selected_report_item = st.selectbox("🎯 篩選單項檢視", ["顯示全部"] + list(all_items))
-            
             if selected_report_item != "顯示全部":
                 display_df = class_data[class_data['項目'] == selected_report_item]
             else:
                 display_df = class_data
-                
             st.dataframe(display_df.sort_values(by="項目"), use_container_width=True)
-            
-            # 匯出按鈕 (CSV)
             csv = display_df.to_csv(index=False).encode('utf-8-sig')
             st.download_button(f"📥 下載 {sel_class} 成績表 (CSV)", csv, f"{sel_class}_report.csv", "text/csv")
         else:
             st.info(f"💡 目前該班級尚未有任何紀錄。")
 
-# --- 6. 複測自動偵測與儲存 (保留核心邏輯) ---
-# 注意：只有在測驗模式下才顯示儲存按鈕
+# --- 6. 複測自動偵測與儲存 ---
 if mode in ["一般術科測驗", "114年體適能"]:
     st.divider()
     existing_mask = (scores_df['姓名'] == sel_name) & (scores_df['項目'] == test_item)
