@@ -34,7 +34,7 @@ if not check_password():
 NORMS = {
     "仰臥捲腹": {
         "男": {13: {"金": 46, "銀": 40, "銅": 26, "中": 16}, 14: {"金": 48, "銀": 40, "銅": 28, "中": 18}, 15: {"金": 50, "銀": 42, "銅": 30, "中": 20}, 16: {"金": 50, "銀": 42, "銅": 30, "中": 21}},
-        "女": {13: {"金": 40, "銀": 32, "銅": 21, "中": 12}, 14: {"金": 40, "銀": 32, "銅": 21, "中": 12}, 15: {"金": 40, "銀": 32, "銅": 21, "中": 13}, 16: {"金": 41, "銀": 33, "銅": 24, "中": 14}}
+        "女": {13: {"金": 40, "銀": 32, "銅": 21, "中": 12}, 14: {"金": 40, "銀": 32, "銅": 21, "優": 12}, 15: {"金": 40, "銀": 32, "銅": 21, "中": 13}, 16: {"金": 41, "銀": 33, "銅": 24, "中": 14}}
     },
     "坐姿體前彎": {
         "男": {13: {"金": 33, "銀": 30, "銅": 24, "中": 18}, 14: {"金": 34, "銀": 31, "銅": 25, "中": 18}, 15: {"金": 35, "銀": 32, "銅": 25, "中": 18}, 16: {"金": 36, "銀": 33, "銅": 26, "中": 18}},
@@ -58,7 +58,6 @@ def clean_numeric_string(val):
     return s
 
 def parse_time_to_seconds(time_str):
-    """將 08:30.0 格式轉為總秒數"""
     try:
         if ":" in str(time_str):
             main, _ = str(time_str).split('.')
@@ -159,33 +158,62 @@ elif mode == "114年體適能":
         test_item, fmt, final_score = "體適能免測", "特殊判定", "N/A"
         final_medal, note = ("銅牌" if "身障" in status else "待加強"), status
 
+# --- 數據報表查詢 ---
 elif mode == "📊 數據報表查詢":
     tab1, tab2, tab3 = st.tabs(["👤 個人成績單", "👥 班級總覽", "⚙️ 系統維護工具"])
+    
     with tab1:
         st.subheader(f"🔍 {sel_name} 的個人測驗紀錄")
         personal_data = scores_df[scores_df['姓名'] == sel_name].copy()
         if not personal_data.empty:
+            c1, c2 = st.columns(2)
+            with c1:
+                p_cat = st.selectbox("🗂️ 篩選測驗類別", ["顯示全部"] + list(personal_data['測驗類別'].unique()), key="p_cat")
+            with c2:
+                p_items = personal_data['項目'].unique() if p_cat == "顯示全部" else personal_data[personal_data['測驗類別'] == p_cat]['項目'].unique()
+                p_item = st.selectbox("🎯 篩選檢測項目", ["顯示全部"] + list(p_items), key="p_item")
+            
+            # 應用過濾
+            df_to_show = personal_data.copy()
+            if p_cat != "顯示全部": df_to_show = df_to_show[df_to_show['測驗類別'] == p_cat]
+            if p_item != "顯示全部": df_to_show = df_to_show[df_to_show['項目'] == p_item]
+            
             cols = ['座號', '測驗類別', '項目', '成績', '等第/獎牌', '紀錄時間', '備註']
-            st.dataframe(personal_data[[c for c in cols if c in personal_data.columns]], use_container_width=True)
+            st.dataframe(df_to_show[[c for c in cols if c in df_to_show.columns]], use_container_width=True)
         else:
             st.info(f"💡 目前尚未有 {sel_name} 的測驗紀錄。")
+
     with tab2:
         st.subheader(f"📂 {sel_class} 班級成績彙整")
         class_data = scores_df[scores_df['班級'] == sel_class].copy()
         if not class_data.empty:
-            if '座號' in class_data.columns:
-                class_data['座號'] = pd.to_numeric(class_data['座號'], errors='coerce')
-                class_data = class_data.sort_values(by=['座號', '項目'])
-            st.dataframe(class_data, use_container_width=True)
+            c1, c2 = st.columns(2)
+            with c1:
+                cl_cat = st.selectbox("🗂️ 篩選測驗類別", ["顯示全部"] + list(class_data['測驗類別'].unique()), key="cl_cat")
+            with c2:
+                cl_items = class_data['項目'].unique() if cl_cat == "顯示全部" else class_data[class_data['測驗類別'] == cl_cat]['項目'].unique()
+                cl_item = st.selectbox("🎯 篩選檢測項目", ["顯示全部"] + list(cl_items), key="cl_item")
+            
+            # 應用過濾
+            df_cl_show = class_data.copy()
+            if cl_cat != "顯示全部": df_cl_show = df_cl_show[df_cl_show['測驗類別'] == cl_cat]
+            if cl_item != "顯示全部": df_cl_show = df_cl_show[df_cl_show['項目'] == cl_item]
+            
+            if '座號' in df_cl_show.columns:
+                df_cl_show['座號'] = pd.to_numeric(df_cl_show['座號'], errors='coerce')
+                df_cl_show = df_cl_show.sort_values(by=['座號', '項目'])
+            st.dataframe(df_cl_show, use_container_width=True)
+            csv = df_cl_show.to_csv(index=False).encode('utf-8-sig')
+            st.download_button(f"📥 下載此報表 (CSV)", csv, f"{sel_class}_filtered_report.csv", "text/csv")
+        else:
+            st.info(f"💡 目前該班級尚未有任何紀錄。")
     
     with tab3:
         st.subheader("🛠️ 全校體適能成績重新判定")
         st.warning("⚠️ 此功能會將 Scores 分頁中所有的「體適能」成績依照常模重新計算一次「等第/獎牌」。")
         if st.button("🚀 開始全自動重新判定"):
             with st.spinner("正在比對名單並計算中..."):
-                # 建立學生資訊字典方便快速查詢
                 stu_info = student_list.set_index('姓名')[['性別', '年齡']].to_dict('index')
-                
                 updated_count = 0
                 for idx, row in scores_df.iterrows():
                     if row['測驗類別'] == "體適能" and row['姓名'] in stu_info:
@@ -193,8 +221,6 @@ elif mode == "📊 數據報表查詢":
                         new_medal = judge_medal(row['項目'], s_info['性別'], s_info['年齡'], row['成績'])
                         scores_df.at[idx, '等第/獎牌'] = new_medal
                         updated_count += 1
-                
-                # 寫回雲端
                 final_df = scores_df.map(clean_numeric_string)
                 conn.update(worksheet="Scores", data=final_df)
                 st.success(f"🎊 重新判定完成！共更新 {updated_count} 筆體適能成績。")
