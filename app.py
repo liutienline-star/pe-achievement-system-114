@@ -38,7 +38,7 @@ NORMS = {
     },
     "坐姿體前彎": {
         "男": {13: {"金": 33, "銀": 30, "銅": 24, "中": 18}, 14: {"金": 34, "銀": 31, "銅": 25, "中": 18}, 15: {"金": 35, "銀": 32, "銅": 25, "中": 18}, 16: {"金": 36, "銀": 33, "銅": 26, "中": 18}},
-        "女": {13: {"金": 39, "銀": 35, "銅": 30, "中": 24}, 14: {"金": 40, "銀": 37, "銅": 30, "中": 23}, 15: {"金": 42, "銀": 38, "銅": 31, "中": 25}, 16: {"金": 42, "銀": 39, "銅": 32, "中": 24}}
+        "女": {13: {"金": 39, "銀": 35, "銅": 30, "中": 24}, 14: {"金": 40, "銀": 37, "銅": 30, "中": 23}, 15: {"金": 42, "銀": 38, "銅": 31, "中": 25}, 16: {"金": 42, "銀": 39, "銅": 32, "傳": 24}}
     },
     "立定跳遠": {
         "男": {13: {"金": 200, "銀": 190, "銅": 170, "中": 148}, 14: {"金": 213, "銀": 203, "銅": 185, "中": 165}, 15: {"金": 221, "銀": 213, "銅": 195, "中": 175}, 16: {"金": 230, "銀": 220, "銅": 200, "中": 180}},
@@ -81,13 +81,24 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 scores_df = conn.read(worksheet="Scores", ttl="0s").astype(str)
 student_list = conn.read(worksheet="Student_List", ttl="0s").astype(str)
 
-# --- 4. 側邊欄 (保留完整圖示) ---
+# --- 4. 側邊欄 (新增座號選取) ---
 st.sidebar.header("📂 學生資訊選取")
 if not student_list.empty:
+    # 選擇班級
     class_list = student_list['班級'].apply(clean_numeric_string).unique()
     sel_class = st.sidebar.selectbox("🏫 選擇班級", class_list)
-    students = student_list[student_list['班級'].apply(clean_numeric_string) == sel_class]
+    
+    # 過濾該班學生
+    class_students = student_list[student_list['班級'].apply(clean_numeric_string) == sel_class]
+    
+    # 【外加功能：選擇座號】
+    no_list = class_students['座號'].apply(clean_numeric_string).sort_values(key=lambda x: x.astype(int)).unique()
+    sel_no = st.sidebar.selectbox("🔢 選擇學生座號", no_list)
+    
+    # 根據座號自動連動姓名
+    students = class_students[class_students['座號'].apply(clean_numeric_string) == sel_no]
     sel_name = st.sidebar.selectbox("👤 選擇學生姓名", students['姓名'])
+    
     stu = students[students['姓名'] == sel_name].iloc[0]
     st.sidebar.info(f"📌 性別：{stu['性別']} | 年齡：{clean_numeric_string(stu['年齡'])}歲")
 else:
@@ -120,13 +131,11 @@ if mode == "一般術科測驗":
     # --- 【外加功能：類別成績檢閱】 ---
     st.markdown("---")
     st.markdown(f"##### 📋 {sel_name} - {test_cat} 類別已測驗項目檢閱")
-    # 過濾出該生在該類別下的歷史紀錄
     cat_history = scores_df[(scores_df['姓名'] == sel_name) & (scores_df['測驗類別'] == test_cat)]
     if not cat_history.empty:
         st.dataframe(cat_history[['項目', '成績', '等第/獎牌', '紀錄時間']], use_container_width=True)
     else:
         st.info(f"💡 目前尚無 {test_cat} 類別的歷史紀錄。")
-    # ----------------------------
 
 elif mode == "114年體適能":
     test_cat = "體適能"
@@ -158,7 +167,6 @@ elif mode == "114年體適能":
 # --- 數據報表查詢 ---
 elif mode == "📊 數據報表查詢":
     tab1, tab2 = st.tabs(["👤 個人成績單", "👥 班級總覽"])
-    
     with tab1:
         st.subheader(f"🔍 {sel_name} 的個人測驗紀錄")
         personal_data = scores_df[scores_df['姓名'] == sel_name].copy()
@@ -170,7 +178,6 @@ elif mode == "📊 數據報表查詢":
             st.bar_chart(medal_counts)
         else:
             st.info(f"💡 目前尚未有 {sel_name} 的測驗紀錄。")
-
     with tab2:
         st.subheader(f"📂 {sel_class} 班級成績彙整")
         class_data = scores_df[scores_df['班級'].apply(clean_numeric_string) == sel_class].copy()
@@ -192,12 +199,10 @@ if mode in ["一般術科測驗", "114年體適能"]:
     st.divider()
     existing_mask = (scores_df['姓名'] == sel_name) & (scores_df['項目'] == test_item)
     has_old = existing_mask.any()
-
     if has_old:
         old_row = scores_df[existing_mask].iloc[-1]
         st.warning(f"🕒 偵測到歷史紀錄：成績 {old_row['成績']} ({old_row['等第/獎牌']})")
         st.info("💡 若此為複測，點擊下方按鈕將自動『覆蓋並更新』為本次最佳成績。")
-
     if st.button("💾 點擊確認：存入試算表"):
         new_data = {
             "紀錄時間": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -210,7 +215,6 @@ if mode in ["一般術科測驗", "114年體適能"]:
             "等第/獎牌": final_medal, 
             "備註": note
         }
-        
         if has_old:
             for col, value in new_data.items():
                 scores_df.loc[existing_mask, col] = str(value)
@@ -220,7 +224,6 @@ if mode in ["一般術科測驗", "114年體適能"]:
             new_row = pd.DataFrame([new_data])
             updated_df = pd.concat([scores_df, new_row], ignore_index=True)
             msg = f"✅ 已成功「新增」{sel_name} 的成績紀錄！"
-        
         updated_df['班級'] = updated_df['班級'].apply(clean_numeric_string)
         conn.update(worksheet="Scores", data=updated_df)
         st.balloons()
