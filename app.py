@@ -44,7 +44,6 @@ def clean_numeric_string(val):
     return str(int(float(s))) if re.match(r'^\d+\.0$', s) else s
 
 def parse_time_to_seconds(time_str):
-    """支援 MM:SS.ms 或純秒數轉換"""
     try:
         s_val = str(time_str).strip()
         if ":" in s_val:
@@ -54,31 +53,28 @@ def parse_time_to_seconds(time_str):
         return float(s_val)
     except: return 0
 
-# --- 3. 萬用判定引擎 (新增/修正：取代舊字典) ---
+# --- 3. 萬用判定引擎 ---
 def universal_judge(category, item, gender, age, value, norms_df):
     try:
-        # 1. 基本過濾
         mask = (norms_df['測驗類別'] == category) & \
                (norms_df['項目名稱'] == item) & \
                (norms_df['性別'] == gender)
         filtered = norms_df[mask].copy()
         if filtered.empty: return "查無常模"
 
-        # 2. 年齡過濾 (0或空白視為通用)
         age_int = int(float(age)) if age else 0
         age_mask = (filtered['年齡'].astype(float).astype(int) == age_int) | (filtered['年齡'].astype(float).astype(int) == 0)
         filtered = filtered[age_mask]
         if filtered.empty: return "待加強"
 
-        # 3. 數值與比較方式判定
         v = parse_time_to_seconds(value)
         comp_method = filtered['比較方式'].iloc[0]
 
-        if comp_method == ">=": # 越大越好 (如：次數、公分)
+        if comp_method == ">=":
             sorted_norms = filtered.sort_values(by='門檻值', key=lambda x: x.astype(float), ascending=False)
             for _, rule in sorted_norms.iterrows():
                 if v >= float(rule['門檻值']): return rule['判定結果']
-        else: # <= 越小越好 (如：秒數)
+        else:
             sorted_norms = filtered.sort_values(by='門檻值', key=lambda x: x.astype(float), ascending=True)
             for _, rule in sorted_norms.iterrows():
                 if v <= float(rule['門檻值']): return rule['判定結果']
@@ -91,7 +87,7 @@ def judge_medal(item, gender, age, value):
 def judge_subject_score(item, gender, value):
     return universal_judge("一般術科", item, gender, 0, value, norms_settings_df)
 
-# --- 4. 側邊欄 ---
+# --- 4. 側邊欄與資料清洗 ---
 scores_df = scores_df.map(clean_numeric_string)
 student_list = student_list.map(clean_numeric_string)
 
@@ -109,7 +105,7 @@ else: st.stop()
 st.title("🏆 114學年度體育成績管理系統")
 mode = st.radio("🎯 功能切換", ["一般術科測驗", "114年體適能", "📊 數據報表查詢"], horizontal=True)
 
-# [A. 一般術科]
+# [A. 一般術科測驗]
 if mode == "一般術科測驗":
     col1, col2 = st.columns(2)
     with col1:
@@ -125,12 +121,21 @@ if mode == "一般術科測驗":
     if "秒數" in fmt:
         c1, c2 = st.columns(2)
         final_score = f"{c1.number_input('秒', 0, 99, 13)}.{c2.number_input('毫秒', 0, 99, 0):02d}"
-    else: final_score = clean_numeric_string(st.text_input("📊 輸入數值", "0"))
+    else: 
+        final_score = clean_numeric_string(st.text_input("📊 輸入數值", "0"))
 
     final_medal = judge_subject_score(test_item, stu['性別'], final_score) if auto_j else manual_m
     note = st.text_input("💬 備註", "")
 
-# [B. 體適能]
+    # 🕒 即時訊息方塊 (補回原本功能)
+    st.write("🕒 **該項目近期測驗紀錄：**")
+    recent = scores_df[(scores_df['姓名'] == stu['姓名']) & (scores_df['項目'] == test_item)]
+    if not recent.empty:
+        st.dataframe(recent[['紀錄時間', '成績', '等第/獎牌']].tail(3), use_container_width=True)
+    else: 
+        st.info("💡 此學生目前尚無該項目的歷史紀錄。")
+
+# [B. 114年體適能]
 elif mode == "114年體適能":
     test_cat = "體適能"
     status = st.selectbox("🩺 學生狀態", ["一般生", "身障/重大傷病 (比照銅牌)", "身體羸弱 (比照待加強)"])
@@ -149,7 +154,7 @@ elif mode == "114年體適能":
         final_score, fmt = "N/A", "特殊判定"
         final_medal, note = ("銅牌" if "身障" in status else "待加強"), status
 
-# [C. 數據報表 (核心功能：分項檢視保留)]
+# [C. 數據報表查詢 (完整保留篩選與管理工具)]
 elif mode == "📊 數據報表查詢":
     tab1, tab2, tab3 = st.tabs(["👤 個人成績單", "👥 班級總覽", "⚙️ 系統管理"])
     with tab1:
@@ -171,16 +176,18 @@ elif mode == "📊 數據報表查詢":
             if cl_cat != "顯示全部": cl_data = cl_data[cl_data['測驗類別'] == cl_cat]
             if cl_it != "顯示全部": cl_data = cl_data[cl_data['項目'] == cl_it]
             st.dataframe(cl_data.sort_values(by='座號'), use_container_width=True)
+            csv = cl_data.to_csv(index=False).encode('utf-8-sig')
+            st.download_button("📥 下載此報表 (CSV)", csv, f"{sel_class}_report.csv", "text/csv")
         else: st.info("該班尚無紀錄")
     with tab3:
         st.subheader("📝 常模即時編輯")
         edited_norms = st.data_editor(norms_settings_df, num_rows="dynamic", use_container_width=True)
-        if st.button("💾 儲存並同步更新"):
+        if st.button("💾 儲存並同步更新常模"):
             conn.update(worksheet="Norms_Settings", data=edited_norms)
             st.success("常模已更新！"); st.rerun()
         
         st.divider()
-        st.subheader("🛠️ 全校重新判定")
+        st.subheader("🛠️ 全校重新判定工具")
         if st.button("🚀 依照新常模重算全校分數"):
             with st.spinner("計算中..."):
                 stu_info = student_list.set_index('姓名')[['性別', '年齡']].to_dict('index')
@@ -200,9 +207,9 @@ if mode in ["一般術科測驗", "114年體適能"]:
     existing_mask = (scores_df['姓名'] == stu['姓名']) & (scores_df['項目'] == test_item)
     if existing_mask.any():
         old = scores_df[existing_mask].iloc[-1]
-        st.warning(f"🕒 偵測到舊紀錄：{old['成績']} ({old['等第/獎牌']})")
+        st.warning(f"🕒 偵測到歷史紀錄：成績 {old['成績']} ({old['等第/獎牌']})")
 
-    if st.button("💾 確認存入雲端"):
+    if st.button("💾 點擊確認：存入試算表"):
         new_row = {
             "紀錄時間": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "班級": sel_class, "座號": stu['座號'], "姓名": stu['姓名'],
@@ -216,7 +223,7 @@ if mode in ["一般術科測驗", "114年體適能"]:
             final_df = pd.concat([scores_df, pd.DataFrame([new_row])], ignore_index=True)
         
         conn.update(worksheet="Scores", data=final_df.map(clean_numeric_string))
-        st.balloons(); st.success("✅ 資料已同步成功！"); st.rerun()
+        st.balloons(); st.success("✅ 成績紀錄已成功同步！"); st.rerun()
 
 if st.sidebar.button("🚪 登出系統"):
     st.session_state["password_correct"] = False
