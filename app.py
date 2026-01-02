@@ -64,7 +64,7 @@ def judge_medal(item, gender, age, value):
     except: pass
     return "待加強"
 
-# --- 3. 一般術科常模 (區間判定) ---
+# --- 3. 一般術科常模 (新增判定邏輯) ---
 def judge_subject_score(item, gender, value):
     try:
         v = float(value)
@@ -104,7 +104,7 @@ if not student_list.empty:
     no_list = stu_df['座號'].sort_values(key=lambda x: pd.to_numeric(x, errors='coerce')).unique()
     sel_no = st.sidebar.selectbox("🔢 選擇學生座號", no_list)
     stu = stu_df[stu_df['座號'] == sel_no].iloc[0]
-    sel_name = stu['姓名'] # 用於報表查詢
+    sel_name = stu['姓名']
     st.sidebar.info(f"📌 {sel_name} | 性別：{stu['性別']} | {stu['年齡']}歲")
 else: st.stop()
 
@@ -130,7 +130,6 @@ if mode == "一般術科測驗":
     final_medal = judge_subject_score(test_item, stu['性別'], final_score) if auto_j else manual_m
     note = st.text_input("💬 備註", "")
     
-    # 歷史紀錄顯示 (保留)
     st.write("🕒 **該項目近期測驗紀錄：**")
     recent = scores_df[(scores_df['姓名'] == sel_name) & (scores_df['項目'] == test_item)]
     if not recent.empty:
@@ -156,7 +155,7 @@ elif mode == "114年體適能":
         final_score, fmt = "N/A", "特殊判定"
         final_medal, note = ("銅牌" if "身障" in status else "待加強"), status
 
-# --- 數據報表查詢 (完整還原自您的原始碼) ---
+# --- 📊 數據報表查詢 (完整還原自您的原始碼，並增加功能) ---
 elif mode == "📊 數據報表查詢":
     tab1, tab2, tab3 = st.tabs(["👤 個人成績單", "👥 班級總覽", "⚙️ 系統維護工具"])
     
@@ -165,51 +164,46 @@ elif mode == "📊 數據報表查詢":
         personal_data = scores_df[scores_df['姓名'] == sel_name].copy()
         if not personal_data.empty:
             c1, c2 = st.columns(2)
-            with c1:
-                p_cat = st.selectbox("🗂️ 篩選測驗類別", ["顯示全部"] + list(personal_data['測驗類別'].unique()), key="p_cat")
+            with c1: p_cat = st.selectbox("🗂️ 篩選測驗類別", ["顯示全部"] + list(personal_data['測驗類別'].unique()), key="p_cat")
             with c2:
                 p_items = personal_data['項目'].unique() if p_cat == "顯示全部" else personal_data[personal_data['測驗類別'] == p_cat]['項目'].unique()
                 p_item = st.selectbox("🎯 篩選檢測項目", ["顯示全部"] + list(p_items), key="p_item")
-            
             df_to_show = personal_data.copy()
             if p_cat != "顯示全部": df_to_show = df_to_show[df_to_show['測驗類別'] == p_cat]
             if p_item != "顯示全部": df_to_show = df_to_show[df_to_show['項目'] == p_item]
-            
             cols = ['座號', '測驗類別', '項目', '成績', '等第/獎牌', '紀錄時間', '備註']
             st.dataframe(df_to_show[[c for c in cols if c in df_to_show.columns]], use_container_width=True)
-        else:
-            st.info(f"💡 目前尚未有 {sel_name} 的測驗紀錄。")
+        else: st.info(f"💡 目前尚未有 {sel_name} 的測驗紀錄。")
 
     with tab2:
         st.subheader(f"📂 {sel_class} 班級成績彙整")
         class_data = scores_df[scores_df['班級'] == sel_class].copy()
         if not class_data.empty:
             c1, c2 = st.columns(2)
-            with c1:
-                cl_cat = st.selectbox("🗂️ 篩選測驗類別", ["顯示全部"] + list(class_data['測驗類別'].unique()), key="cl_cat")
+            with c1: cl_cat = st.selectbox("🗂️ 篩選測驗類別", ["顯示全部"] + list(class_data['測驗類別'].unique()), key="cl_cat")
             with c2:
                 cl_items = class_data['項目'].unique() if cl_cat == "顯示全部" else class_data[class_data['測驗類別'] == cl_cat]['項目'].unique()
                 cl_item = st.selectbox("🎯 篩選檢測項目", ["顯示全部"] + list(cl_items), key="cl_item")
-            
             df_cl_show = class_data.copy()
             if cl_cat != "顯示全部": df_cl_show = df_cl_show[df_cl_show['測驗類別'] == cl_cat]
             if cl_item != "顯示全部": df_cl_show = df_cl_show[df_cl_show['項目'] == cl_item]
-            
             if '座號' in df_cl_show.columns:
                 df_cl_show['座號'] = pd.to_numeric(df_cl_show['座號'], errors='coerce')
                 df_cl_show = df_cl_show.sort_values(by=['座號', '項目'])
             st.dataframe(df_cl_show, use_container_width=True)
             csv = df_cl_show.to_csv(index=False).encode('utf-8-sig')
             st.download_button(f"📥 下載此報表 (CSV)", csv, f"{sel_class}_filtered_report.csv", "text/csv")
-        else:
-            st.info(f"💡 目前該班級尚未有任何紀錄。")
+        else: st.info(f"💡 目前該班級尚未有任何紀錄。")
     
     with tab3:
-        st.subheader("🛠️ 全校體適能成績重新判定")
-        st.warning("⚠️ 此功能會將 Scores 分頁中所有的「體適能」成績依照常模重新計算一次「等第/獎牌」。")
-        if st.button("🚀 開始全自動重新判定"):
+        st.subheader("🛠️ 全校成績重新判定工具")
+        stu_info = student_list.set_index('姓名')[['性別', '年齡']].to_dict('index')
+        
+        # 功能 1: 體適能 (還原自您的原始碼)
+        st.markdown("### 1. 體適能獎牌重算")
+        st.warning("⚠️ 此功能會將 Scores 分頁中所有的「體適能」成績依照常模重新計算。")
+        if st.button("🚀 開始全自動重新判定 (體適能)"):
             with st.spinner("正在比對名單並計算中..."):
-                stu_info = student_list.set_index('姓名')[['性別', '年齡']].to_dict('index')
                 updated_count = 0
                 for idx, row in scores_df.iterrows():
                     if row['測驗類別'] == "體適能" and row['姓名'] in stu_info:
@@ -217,12 +211,27 @@ elif mode == "📊 數據報表查詢":
                         new_medal = judge_medal(row['項目'], s_info['性別'], s_info['年齡'], row['成績'])
                         scores_df.at[idx, '等第/獎牌'] = new_medal
                         updated_count += 1
-                final_df = scores_df.map(clean_numeric_string)
-                conn.update(worksheet="Scores", data=final_df)
-                st.success(f"🎊 重新判定完成！共更新 {updated_count} 筆體適能成績。")
-                st.rerun()
+                conn.update(worksheet="Scores", data=scores_df.map(clean_numeric_string))
+                st.success(f"🎊 重新判定完成！共更新 {updated_count} 筆體適能成績。"); st.rerun()
+        
+        # 功能 2: 一般術科 (您要求的新功能)
+        st.markdown("---")
+        st.markdown("### 2. 一般術科分數重算")
+        st.info("💡 此按鈕會掃描所有球類、田徑等紀錄，並對照 PDF 常模自動填入「分數」。")
+        if st.button("🎯 開始全自動重新換算 (術科分數)"):
+            with st.spinner("對照常模換算中..."):
+                updated_count = 0
+                for idx, row in scores_df.iterrows():
+                    if row['測驗類別'] != "體適能" and row['姓名'] in stu_info:
+                        s_info = stu_info[row['姓名']]
+                        new_score = judge_subject_score(row['項目'], s_info['性別'], row['成績'])
+                        if new_score != "尚未判定":
+                            scores_df.at[idx, '等第/獎牌'] = new_score
+                            updated_count += 1
+                conn.update(worksheet="Scores", data=scores_df.map(clean_numeric_string))
+                st.success(f"🎊 術科換算完成！共更新 {updated_count} 筆分數。"); st.rerun()
 
-# --- 7. 複測自動偵測與儲存 (完整還原自您的原始碼) ---
+# --- 7. 複測自動偵測與儲存 (還原自您的原始碼) ---
 if mode in ["一般術科測驗", "114年體適能"]:
     st.divider()
     existing_mask = (scores_df['姓名'] == sel_name) & (scores_df['項目'] == test_item)
@@ -249,14 +258,10 @@ if mode in ["一般術科測驗", "114年體適能"]:
                 scores_df.loc[existing_mask, col] = str(value)
             updated_df = scores_df
         else:
-            new_row = pd.DataFrame([new_data])
-            updated_df = pd.concat([scores_df, new_row], ignore_index=True)
+            updated_df = pd.concat([scores_df, pd.DataFrame([new_data])], ignore_index=True)
         
-        updated_df = updated_df.map(clean_numeric_string)
-        conn.update(worksheet="Scores", data=updated_df)
-        st.balloons()
-        st.success("✅ 成績紀錄已成功同步至雲端！")
-        st.rerun()
+        conn.update(worksheet="Scores", data=updated_df.map(clean_numeric_string))
+        st.balloons(); st.success("✅ 成績紀錄已成功同步至雲端！"); st.rerun()
 
 if st.sidebar.button("🚪 登出系統"):
     st.session_state["password_correct"] = False
