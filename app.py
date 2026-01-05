@@ -29,14 +29,15 @@ if not check_password(): st.stop()
 # --- 1. 資料連線 ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 
+# 修改後：資料會存在快取 10 分鐘，這期間不管您怎麼點選單，都不會消耗 Google 流量
 try:
-    scores_df = conn.read(worksheet="Scores", ttl="0s").astype(str)
-    student_list = conn.read(worksheet="Student_List", ttl="0s").astype(str)
-    norms_settings_df = conn.read(worksheet="Norms_Settings", ttl="0s").astype(str)
+    scores_df = conn.read(worksheet="Scores", ttl="600s").astype(str)
+    student_list = conn.read(worksheet="Student_List", ttl="600s").astype(str)
+    norms_settings_df = conn.read(worksheet="Norms_Settings", ttl="600s").astype(str)
 except Exception as e:
-    st.error(f"讀取資料表失敗，請確保分頁名稱為 Scores, Student_List, Norms_Settings。錯誤: {e}")
+    # 如果還是遇到 429 錯誤，這段訊息會提醒您
+    st.error(f"讀取資料表失敗，可能是流量過高，請等一分鐘後重新整理頁面。錯誤: {e}")
     st.stop()
-
 # --- 2. 輔助函式 ---
 def clean_numeric_string(val):
     if pd.isna(val) or val == 'nan' or val == "": return ""
@@ -90,6 +91,14 @@ def judge_subject_score(item, gender, value):
 # --- 4. 側邊欄與資料清洗 ---
 scores_df = scores_df.map(clean_numeric_string)
 student_list = student_list.map(clean_numeric_string)
+
+with st.sidebar:
+    st.header("🛠️ 系統工具")
+    if st.button("🔄 手動更新資料 (清除快取)"):
+        st.cache_data.clear() # 清除 ttl=600s 的暫存資料
+        st.success("快取已清除，正在重新抓取資料...")
+        st.rerun()
+    st.divider()
 
 if not student_list.empty:
     cl_list = student_list['班級'].unique()
