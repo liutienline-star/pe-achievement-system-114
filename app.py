@@ -225,14 +225,29 @@ if mode in ["一般術科測驗", "114年體適能"]:
             "測驗類別": test_cat, "項目": test_item, "成績": final_score,
             "顯示格式": fmt, "等第/獎牌": final_medal, "備註": note
         }
+        
+        # 處理覆蓋或新增
         if existing_mask.any():
             for k, v in new_row.items(): scores_df.loc[existing_mask, k] = str(v)
             final_df = scores_df
         else:
             final_df = pd.concat([scores_df, pd.DataFrame([new_row])], ignore_index=True)
         
+        # 1. 執行更新到 Google Sheets
         conn.update(worksheet="Scores", data=final_df.map(clean_numeric_string))
-        st.balloons(); st.success("✅ 成績紀錄已成功同步！"); st.rerun()
+        
+        # 💡 2. 【核心修改】在存檔成功後，立刻清除快取！
+        # 這樣下次程式執行讀取時，才會強制從 Google 抓回剛剛存入的那一筆新資料
+        st.cache_data.clear() 
+        
+        # 3. 顯示成功訊息並重新整理
+        st.balloons() 
+        st.success("✅ 成績紀錄已成功同步！")
+        
+        # 延遲一下讓老師看到成功訊息，然後重新整理
+        import time
+        time.sleep(1) 
+        st.rerun()
 
 if st.sidebar.button("🚪 登出系統"):
     st.session_state["password_correct"] = False
