@@ -276,7 +276,7 @@ with tab_report:
         with cb:
             st.write("**🚀 AI 診斷分析 (Analysis)**")
             p_a = df_analysis[df_analysis["姓名"] == sel_name]
-            st.dataframe(p_a[["項目", "最終修訂分數", "時間"]], use_container_width=True)
+            st.dataframe(p_a[["項目", "最終得分", "時間"]], use_container_width=True)
     with r2:
         st.subheader(f"👥 {sel_class} 班級成績全覽")
         cl_view = df_scores[df_scores["班級"] == sel_class]
