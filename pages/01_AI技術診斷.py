@@ -5,25 +5,37 @@ import pandas as pd
 from datetime import datetime
 import os, time, re
 
-# --- 1. 系統介面與風格設定 ---
-st.set_page_config(page_title="AI 體育智慧診斷平台 v2.0", layout="wide", page_icon="🏅")
+# ==========================================
+# 1. 系統初始與安全性設定
+# ==========================================
+st.set_page_config(page_title="114學年度體育智慧管理平台", layout="wide", page_icon="🏆")
 
-# 自定義美化 CSS
-st.markdown("""
-    <style>
-    .main { background-color: #f9fbfd; }
-    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 12px; border: 1px solid #e1e4e8; }
-    .report-card { background-color: #ffffff; padding: 25px; border-radius: 15px; border-left: 6px solid #007bff; box-shadow: 0 4px 6px rgba(0,0,0,0.05); line-height: 1.6; }
-    .formula-box { background-color: #eef6ff; padding: 15px; border-radius: 10px; border: 1px dashed #007bff; }
-    </style>
-    """, unsafe_allow_html=True)
+# --- 登入狀態檢查 ---
+if "password_correct" not in st.session_state:
+    st.session_state["password_correct"] = False
 
-# API KEY 驗證
+# --- 登入介面邏輯 (修正原本的死結問題) ---
+if not st.session_state["password_correct"]:
+    st.title("🔒 體育成績管理系統 - 登入")
+    col1, _ = st.columns([1, 2])
+    with col1:
+        u = st.text_input("👤 管理員帳號")
+        p = st.text_input("🔑 密碼", type="password")
+        if st.button("🚀 確認登入", use_container_width=True):
+            if u == "tienline" and p == "641101":
+                st.session_state["password_correct"] = True
+                st.rerun()
+            else:
+                st.error("🚫 帳號或密碼錯誤")
+    st.stop() # 未登入前，程式在此中斷，不執行後續邏輯
+
+# --- API 金鑰設定 ---
 if "GOOGLE_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
     MODEL_ID = "gemini-2.0-flash" 
 else:
-    st.error("❌ 找不到 API_KEY，請檢查 Streamlit Secrets。"); st.stop()
+    st.error("❌ 找不到 API_KEY，請在 Streamlit Secrets 設定。")
+    st.stop()
 
 # --- 2. 核心資料工具與讀取 (格式優化) ---
 conn = st.connection("gsheets", type=GSheetsConnection)
