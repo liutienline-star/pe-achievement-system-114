@@ -1,304 +1,256 @@
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import google.generativeai as genai
-import google.api_core.exceptions
 import pandas as pd
 from datetime import datetime
-import os
-import time
-import re
+import os, time, re
 
-# ==========================================
-# 1. 系統初始與安全性設定
-# ==========================================
-st.set_page_config(page_title="114學年度體育智慧管理平台", layout="wide", page_icon="🏆")
+# --- 1. 系統介面與風格設定 ---
+st.set_page_config(page_title="AI 體育智慧診斷平台 v2.0", layout="wide", page_icon="🏅")
 
-# --- 登入狀態檢查 ---
-if "password_correct" not in st.session_state:
-    st.session_state["password_correct"] = False
+# 自定義美化 CSS
+st.markdown("""
+    <style>
+    .main { background-color: #f9fbfd; }
+    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 12px; border: 1px solid #e1e4e8; }
+    .report-card { background-color: #ffffff; padding: 25px; border-radius: 15px; border-left: 6px solid #007bff; box-shadow: 0 4px 6px rgba(0,0,0,0.05); line-height: 1.6; }
+    .formula-box { background-color: #eef6ff; padding: 15px; border-radius: 10px; border: 1px dashed #007bff; }
+    </style>
+    """, unsafe_allow_html=True)
 
-# --- 登入介面邏輯 (修正原本的死結問題) ---
-if not st.session_state["password_correct"]:
-    st.title("🔒 體育成績管理系統 - 登入")
-    col1, _ = st.columns([1, 2])
-    with col1:
-        u = st.text_input("👤 管理員帳號")
-        p = st.text_input("🔑 密碼", type="password")
-        if st.button("🚀 確認登入", use_container_width=True):
-            if u == "tienline" and p == "641101":
-                st.session_state["password_correct"] = True
-                st.rerun()
-            else:
-                st.error("🚫 帳號或密碼錯誤")
-    st.stop() # 未登入前，程式在此中斷，不執行後續邏輯
-
-# --- API 金鑰設定 ---
+# API KEY 驗證
 if "GOOGLE_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
     MODEL_ID = "gemini-2.0-flash" 
 else:
-    st.error("❌ 找不到 API_KEY，請在 Streamlit Secrets 設定。")
-    st.stop()
+    st.error("❌ 找不到 API_KEY，請檢查 Streamlit Secrets。"); st.stop()
 
-# ==========================================
-# 2. 核心資料工具函式 (完整保留老師邏輯)
-# ==========================================
+# --- 2. 核心資料工具與讀取 (格式優化) ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-def clean_numeric_string(val):
+def clean_format(val):
+    """徹底處理 .0 問題，同時保留非數字字串"""
     if pd.isna(val) or val == 'nan' or val == "": return ""
     s = str(val).strip()
-    return str(int(float(s))) if re.match(r'^\d+\.0$', s) else s
+    # 如果是數字結尾為 .0，則去除
+    if s.endswith('.0'): s = s[:-2]
+    return s
 
-def parse_time_to_seconds(time_str):
+@st.cache_data(ttl=300)
+def load_all_data():
     try:
-        s_val = str(time_str).strip()
-        if ":" in s_val:
-            parts = s_val.split('.')[0].split(':')
-            return int(parts[0]) * 60 + int(parts[1])
-        return float(s_val)
-    except: return 0
+        df_stu = conn.read(worksheet="Student_List").map(clean_format)
+        df_cri = conn.read(worksheet="AI_Criteria").map(clean_format)
+        df_sco = conn.read(worksheet="Scores").map(clean_format)
+        try: 
+            df_his = conn.read(worksheet="Analysis_Results").map(clean_format)
+        except: 
+            df_his = pd.DataFrame(columns=["時間", "班級", "座號", "姓名", "項目", "數據分數", "技術分數", "最終得分", "AI診斷報告"])
+        return df_stu, df_cri, df_sco, df_his
+    except Exception as e:
+        st.error(f"📡 資料連結失敗，請檢查分頁名稱：{e}"); st.stop()
 
-def parse_logic_weights(logic_str):
-    # 支援「數據(70%), 技術(30%)」或「70, 30」格式
-    nums = re.findall(r"(\d+)", str(logic_str))
-    if len(nums) >= 2: return int(nums[0])/100, int(nums[1])/100
-    return 0.7, 0.3
+df_students, df_criteria, df_scores, df_history = load_all_data()
 
-@st.cache_data(ttl=0) # 設定為 0 確保手動更新時能即時抓取
-def load_all_sheets():
-    s = conn.read(worksheet="Scores").astype(str).map(clean_numeric_string)
-    sl = conn.read(worksheet="Student_List").astype(str).map(clean_numeric_string)
-    n = conn.read(worksheet="Norms_Settings").astype(str).map(clean_numeric_string)
-    c = conn.read(worksheet="AI_Criteria").astype(str).map(clean_numeric_string)
-    try:
-        a = conn.read(worksheet="Analysis_Results").astype(str).map(clean_numeric_string)
-    except:
-        # 如果 Analysis_Results 工作表不存在，則建立預設架構
-        a = pd.DataFrame(columns=["時間", "班級", "姓名", "項目", "數據分數", "技術分數", "最終修訂分數", "AI診斷報告"])
-    return s, sl, n, c, a
-
-df_scores, df_student_list, df_norms, df_criteria, df_analysis = load_all_sheets()
-
-# ==========================================
-# 3. 側邊欄：學生選單與狀態管理
-# ==========================================
+# --- 3. 側邊欄：導航與功能控制 ---
 with st.sidebar:
-    st.header("👤 學生與導覽")
-    all_classes = sorted(df_student_list["班級"].unique())
-    sel_class = st.selectbox("1. 選擇班級", all_classes)
+    st.title("📂 學生檔案箱")
     
-    stu_df = df_student_list[df_student_list["班級"] == sel_class].copy()
-    stu_df["座號_int"] = pd.to_numeric(stu_df["座號"], errors="coerce")
+    # 班級選擇 (確保無 .0)
+    all_classes = sorted(df_students["班級"].unique(), key=lambda x: int(x) if x.isdigit() else 0)
+    sel_class = st.selectbox("🏫 選擇班級", all_classes)
+    
+    # 學生選擇 (確保無 .0 且排序正確)
+    stu_df = df_students[df_students["班級"] == sel_class].copy()
+    stu_df["座號_int"] = pd.to_numeric(stu_df["座號"], errors="coerce").fillna(0).astype(int)
     stu_df = stu_df.sort_values("座號_int")
     
-    stu_options = [f"[{row['座號']}] {row['姓名']}" for _, row in stu_df.iterrows()]
-    sel_option = st.selectbox("2. 選擇學生", stu_options)
+    stu_options = [f"【座號 {row['座號']}】{row['姓名']}" for _, row in stu_df.iterrows()]
+    sel_option = st.selectbox("👤 選擇學生", stu_options)
     
-    sel_name = re.search(r"\] (.*)", sel_option).group(1)
+    sel_name = re.search(r"】(.*)", sel_option).group(1)
     curr_stu = stu_df[stu_df["姓名"] == sel_name].iloc[0]
     
-    # --- 狀態重置機制：換學生時清空 AI 暫存 ---
-    if "last_stu" not in st.session_state or st.session_state["last_stu"] != sel_name:
-        st.session_state["ai_done"] = False
-        st.session_state["ai_report"] = ""
-        st.session_state["last_stu"] = sel_name
-
     st.divider()
-    st.success(f"📌 {sel_name}\n\n性別：{curr_stu['性別']} | 年齡：{curr_stu['年齡']}")
+    st.markdown(f"**當前診斷對象**：\n### {sel_name} ({curr_stu['性別']})")
     
-    if st.button("🚪 登出系統", use_container_width=True):
-        st.session_state["password_correct"] = False
-        st.rerun()
-
-# ==========================================
-# 4. 判定引擎 (完整保留老師邏輯)
-# ==========================================
-def universal_judge(category, item, gender, age, value, norms_df):
-    try:
-        mask = (norms_df['測驗類別'] == category) & (norms_df['項目名稱'] == item) & (norms_df['性別'] == gender)
-        f = norms_df[mask].copy()
-        if f.empty: return "無常模", 60
-        age_int = int(float(age)) if age else 0
-        f = f[(f['年齡'].astype(float).astype(int) == age_int) | (f['年齡'].astype(float).astype(int) == 0)]
-        if f.empty: return "待加強", 60
-        v = parse_time_to_seconds(value)
-        comp = f['比較方式'].iloc[0]
-        f['門檻值_num'] = pd.to_numeric(f['門檻值'], errors='coerce')
-        sorted_norms = f.sort_values(by='門檻值_num', ascending=(comp == "<="))
-        for _, rule in sorted_norms.iterrows():
-            if (comp == ">=" and v >= rule['門檻值_num']) or (comp == "<=" and v <= rule['門檻值_num']):
-                return rule['判定結果'], int(float(rule.get('分數', 60)))
-    except: pass
-    return "待加強", 60
-
-# ==========================================
-# 5. 主頁面：功能分頁
-# ==========================================
-tab_entry, tab_ai, tab_report, tab_manage = st.tabs(["📝 成績錄入", "🚀 AI 智慧診斷", "📊 數據報表", "⚙️ 後台管理"])
-
-# --- [分頁 1：成績錄入] ---
-with tab_entry:
-    st.subheader(f"📝 {sel_name} 成績資料錄入")
-    c1, c2 = st.columns(2)
-    with c1:
-        t_cat = st.selectbox("🗂️ 測驗類別", ["體適能", "一般術科", "球類", "田徑"])
-        items = df_norms[df_norms["測驗類別"] == t_cat]["項目名稱"].unique().tolist()
-        t_item = st.selectbox("🎯 項目名稱", items)
-    with c2:
-        f_val = st.text_input("📊 輸入成績 (體適能輸整數 / 秒數輸 分:秒)", "0")
-        res_medal, res_score = universal_judge(t_cat, t_item, curr_stu['性別'], curr_stu['年齡'], f_val, df_norms)
-        st.info(f"系統判定：**{res_medal}** (數據得分：{res_score})")
-
-    if st.button("💾 儲存並覆蓋現有成績", use_container_width=True):
-        new_row = {
-            "紀錄時間": datetime.now().strftime("%Y-%m-%d %H:%M"), "班級": sel_class, "座號": curr_stu['座號'],
-            "姓名": sel_name, "項目": t_item, "成績": f_val, "等第/獎牌": str(res_score), "備註": res_medal, "測驗類別": t_cat
-        }
-        # 覆蓋邏輯
-        df_scores = pd.concat([df_scores, pd.DataFrame([new_row])], ignore_index=True).drop_duplicates(subset=["姓名", "項目"], keep="last")
-        conn.update(worksheet="Scores", data=df_scores)
-        st.cache_data.clear()
-        st.success("✅ 成績已錄入資料庫！")
-
-# --- [分頁 2：AI 智慧診斷] ---
-with tab_ai:
-    st.header("🚀 AI 專業技術影像診斷")
-    stu_items = df_scores[df_scores["姓名"] == sel_name]["項目"].unique()
+    # 老師覆核開關
+    manual_mode = st.checkbox("🛠️ 開啟老師手動覆核模式", help="當 AI 誤判或影片品質不佳時，可手動修正報告與分數。")
     
-    if len(stu_items) == 0:
-        st.warning("⚠️ 該生尚無成績錄入，請先完成「成績錄入」後再進行技術診斷。")
+    if st.button("🔄 同步雲端最新數據"):
+        st.cache_data.clear(); st.rerun()
+
+# --- 4. 主介面：診斷儀表板 ---
+st.title("🏆 AI 體育技術精準診斷系統")
+
+# 第一區：設定與自動檢索
+col_set, col_data = st.columns([1, 1.2])
+
+with col_set:
+    st.subheader("🎯 1. 診斷規準設定")
+    sel_item = st.selectbox("請選擇測驗項目", df_criteria["測驗項目"].unique())
+    c_row = df_criteria[df_criteria["測驗項目"] == sel_item].iloc[0]
+    
+    indicators = c_row.get("具體指標 (Indicators)", "未設定指標")
+    context = c_row.get("AI 指令脈絡 (AI_Context)", "教學診斷與建議")
+    
+    # --- 權重解析修正段落 (請替換此部分) ---
+    raw_logic = str(c_row.get("評分權重 (Scoring_Logic)", "70,30"))
+    # 先抓取所有數字
+    all_nums = [int(n) for n in re.findall(r"(\d+)", raw_logic)]
+    
+    # 【核心修正】：過濾掉小於或等於 5 的數字 (例如序號 1. 或 2.)
+    # 體育權重通常不會設為 5% 以下，以此區隔「項目序號」與「實際權重」
+    filtered_weights = [n for n in all_nums if n > 5]
+    
+    if len(filtered_weights) >= 2:
+        w_data_pct = filtered_weights[0] # 抓到第一個大於 5 的數字 (如 70)
+        w_tech_pct = filtered_weights[1] # 抓到第二個大於 5 的數字 (如 30)
     else:
-        sel_item = st.selectbox("🎯 選擇要診斷的項目", stu_items)
+        # 如果解析失敗（數字不足），則提供預設值 70, 30
+        w_data_pct, w_tech_pct = 70, 30 
+    
+    # 轉換成小數點供後續計算使用
+    w_data = w_data_pct / 100
+    w_tech = w_tech_pct / 100
+    # -----------------------------------
+    
+    with st.expander("🔍 檢視本項 AI 評分指標"):
+        st.write(f"**技術規準：**\n{indicators}")
+        st.caption(f"權重分配：數據 {w_data_pct}% / 技術 {w_tech_pct}%")
+
+with col_data:
+    st.subheader("📊 2. 原始成績自動對接")
+    # 比對 Scores 分頁
+    match = df_scores[(df_scores["姓名"] == sel_name) & (df_scores["項目"] == sel_item)]
+    
+    if not match.empty:
+        last_rec = match.iloc[-1]
+        raw_rec = last_rec.get("成績", "N/A") # 原始測驗錄入 (如: 12.5)
+        score_val = pd.to_numeric(last_rec.get("等第/獎牌", 0), errors='coerce') # 轉化後的數據分
         
-        # 取得數據成績
-        score_row = df_scores[(df_scores["姓名"] == sel_name) & (df_scores["項目"] == sel_item)]
-        last_rec = score_row.iloc[-1]
-        data_score = pd.to_numeric(last_rec.get("等第/獎牌"), errors='coerce')
+        st.info(f"✅ 已成功串聯 {sel_name} 的歷史成績")
+        c_a, c_b = st.columns(2)
+        c_a.metric("原始測驗紀錄", raw_rec)
+        c_b.metric("數據轉化分數", f"{int(score_val)} 分")
+    else:
+        st.warning("⚠️ Scores 分頁中找不到對應成績")
+        score_val = st.number_input("請手動輸入本次數據分數 (0-100)", 0, 100, 0)
+
+st.divider()
+
+# 第二區：影像與 AI 報告
+v_col, r_col = st.columns([1, 1.3])
+
+with v_col:
+    st.subheader("📹 3. 技術動作影像")
+    up_v = st.file_uploader(f"📎 上傳【{sel_item}】影片", type=["mp4", "mov"])
+    if up_v:
+        st.video(up_v)
+
+with r_col:
+    st.subheader("📝 4. AI 專業診斷分析")
+    
+    if st.button("🚀 啟動 AI 指標比對診斷", use_container_width=True) and up_v:
+        with st.spinner("AI 考官正在嚴格對照指標進行分析..."):
+            try:
+                # 影片處理
+                t_path = f"t_{int(time.time())}.mp4"
+                with open(t_path, "wb") as f: f.write(up_v.read())
+                v_f = genai.upload_file(path=t_path)
+                while v_f.state.name == "PROCESSING": time.sleep(2); v_f = genai.get_file(v_f.name)
+                
+                # 核心 Prompt
+                full_prompt = f"""
+                你是體育鑑定專家。請針對【{sel_item}】進行「兩階段」判定。
+                
+                【官方技術指標 (指標即為項目特徵)】："{indicators}"
+                【教學脈絡】："{context}"
+
+                ### 第一階段：硬核視覺偵錯 (🛑 項目判定)
+                - 任務：比對影片內容是否符合上述指標中的「核心動作特徵」。
+                - 嚴格標準：若影片中未觀察到指標所描述的關鍵動作（例如：指標要求『單手持球』，影片卻是『雙手拋球』），則判定為「項目不符」。
+                - 輸出要求：若判定不符，必須輸出：🛑 項目偵錯錯誤。並詳細說明「影片中的動作特徵」與「官方指標」哪裡不符。
+                - 注意：此階段必須嚴謹，防止學生上傳錯誤影片。
+
+                ### 第二階段：技術診斷與評分 (僅在第一階段通過時執行)
+                - 任務：只要確認是該項目，不論學生做得多生疏、多不標準，都要給予分數。
+                - 評分策略：
+                  * 動作極差/嚴重變形：40-60分 (仍需給分以利紀錄)
+                  * 動作生疏/基本成形：60-75分
+                  * 表現優良：76-90分
+                  * 動作精準：91-100分
+                - 格式要求：結尾必須輸出『技術分：[數字]』。
+
+                結論要求：
+                1. 若第一階段不通過，絕對不准給出「技術分」。
+                2. 若第一階段通過，即使學生做得爛，也必須給出「技術分」以便存檔。
+                """
+                
+                model = genai.GenerativeModel(MODEL_ID)
+                response = model.generate_content([v_f, full_prompt])
+                
+                # 紀錄結果
+                st.session_state['report'] = response.text
+                s_match = re.search(r"技術分：(\d+)", response.text)
+                st.session_state['t_score'] = int(s_match.group(1)) if s_match else 0
+                st.session_state['is_done'] = True
+                
+                genai.delete_file(v_f.name); os.remove(t_path)
+            except Exception as e: st.error(f"分析失敗：{e}")
+
+    # 顯示結果
+    if st.session_state.get('is_done') or manual_mode:
+        report_text = st.session_state.get('report', "請啟動分析或手動輸入...")
         
-        if pd.isna(data_score):
-            st.error("🛑 錯誤：此項目無有效數據分數，請先重新錄入成績。")
+        if manual_mode:
+            st.warning("🛠️ 手動覆核模式已開啟，您可以直接編輯下方內容與分數。")
+            report_text = st.text_area("編輯診斷報告內容", report_text, height=250)
+            tech_score = st.number_input("調整技術分 (0-100)", 0, 100, st.session_state.get('t_score', 0))
         else:
-            # 參照 AI_Criteria
-            c_row = df_criteria[df_criteria["測驗項目"] == sel_item]
-            if c_row.empty: 
-                st.error(f"❌ 規準表找不到項目：{sel_item}，請至「後台管理」新增。")
-            else:
-                c_row = c_row.iloc[0]
-                w_data, w_tech = parse_logic_weights(c_row.get("評分權重 (Scoring_Logic)"))
-                indicators = str(c_row.get("具體指標 (Indicators)", ""))
-                ai_context = str(c_row.get("AI 指令脈絡 (AI_Context)", "專業體育老師"))
-                ai_cues = str(c_row.get("專業指令與建議 (Cues)", ""))
+            st.markdown(f'<div class="report-card">{report_text}</div>', unsafe_allow_html=True)
+            tech_score = st.session_state.get('t_score', 0)
 
-                col_i, col_v = st.columns([1, 1.2])
-                with col_i:
-                    st.subheader("📊 診斷參考")
-                    st.metric("數據得分", f"{data_score} 分")
-                    st.warning(f"⚖️ 權重：數據 {int(w_data*100)}% / 技術 {int(w_tech*100)}%")
-                    with st.expander("🔍 檢視技術指標規準"): st.markdown(indicators)
-                    
-                with col_v:
-                    st.subheader("📹 影片上傳")
-                    up_v = st.file_uploader(f"請上傳【{sel_name}】的【{sel_item}】影片", type=["mp4", "mov"])
-                    if up_v: st.video(up_v)
-
-                if st.button("🚀 開始嚴謹分析", use_container_width=True) and up_v:
-                    with st.spinner("AI 考官正在以最高規準進行技術對照..."):
-                        try:
-                            temp_path = f"temp_{int(time.time())}.mp4"
-                            with open(temp_path, "wb") as f: f.write(up_v.read())
-                            v_file = genai.upload_file(path=temp_path)
-                            while v_file.state.name == "PROCESSING": time.sleep(2); v_file = genai.get_file(v_file.name)
-                            
-                            # 核心 Prompt (保持原創性)
-                            full_prompt = f"""
-                            【身分設定：最高級別考官】脈絡：{ai_context}
-                            【受測項目：{sel_item}】
-                            
-                            ### 第一階段：視覺偵錯 (🛑)
-                            1. 比對影片動作是否符合指標："{indicators}"。
-                            2. 若項目不符，立即回報：🛑 項目偵錯錯誤。理由：[具體說明內容]。
-
-                            ### 第二階段：專業技術診斷報告 (參考建議：{ai_cues})
-                            格式：1.[確認動作] 2.[關鍵優化] 3.[訓練處方]
-
-                            ### 第三階段：技術評分 (嚴格遵守指標："{indicators}")
-                            - 完全達成：90-100 | 部分達成：80-89 | 基礎達成：75+ | 未達標：70以下
-                            格式：技術分：XX分。
-                            """
-                            model = genai.GenerativeModel(MODEL_ID, generation_config={"temperature": 0})
-                            resp = model.generate_content([v_file, full_prompt])
-                            
-                            if "🛑" in resp.text:
-                                st.error(resp.text)
-                            else:
-                                st.session_state['ai_report'] = resp.text
-                                # 抓取技術分數字，若失敗則預設 80
-                                score_match = re.search(r"技術分：(\d+)", resp.text)
-                                st.session_state['ai_tech_score'] = int(score_match.group(1)) if score_match else 80
-                                st.session_state['ai_done'] = True
-                            
-                            genai.delete_file(v_file.name)
-                            if os.path.exists(temp_path): os.remove(temp_path)
-                        except google.api_core.exceptions.ResourceExhausted:
-                            st.error("🛑 API 流量限制 (429 Error)，請稍等 1 分鐘後再試。")
-                        except Exception as e: 
-                            st.error(f"分析失敗：{e}")
-
-                # 顯示分析結果與儲存
-                if st.session_state.get('ai_done'):
-                    st.divider()
-                    st.markdown(f"### 📋 AI 診斷報告\n{st.session_state['ai_report']}")
-                    t_input = st.number_input("🛠️ 考官手動核定技術評分", 0, 100, value=st.session_state['ai_tech_score'])
-                    total = (data_score * w_data) + (t_input * w_tech)
-                    st.subheader(f"🏆 最終建議總分：{total:.1f}")
-                    
-                    if st.button("💾 確認並同步至 Analysis_Results"):
-                        new_a = {
-                            "時間": datetime.now().strftime("%Y-%m-%d %H:%M"), "班級": sel_class, "姓名": sel_name, "項目": sel_item,
-                            "數據分數": str(data_score), "技術分數": str(t_input), "最終修訂分數": str(round(total, 2)), "AI診斷報告": st.session_state['ai_report']
-                        }
-                        df_analysis = pd.concat([df_analysis, pd.DataFrame([new_a])], ignore_index=True).drop_duplicates(subset=["姓名", "項目"], keep="last")
-                        conn.update(worksheet="Analysis_Results", data=df_analysis)
-                        st.cache_data.clear()
-                        st.success("✅ 診斷紀錄已成功同步至雲端！")
-
-# --- [分頁 3：數據報表] ---
-with tab_report:
-    r1, r2 = st.tabs(["👤 個人學習歷程單", "👥 班級成績總覽"])
-    with r1:
-        st.subheader(f"📊 {sel_name} 個人報表")
-        ca, cb = st.columns(2)
-        with ca:
-            st.write("**📝 原始數據紀錄 (Scores)**")
-            p_s = df_scores[df_scores["姓名"] == sel_name]
-            st.dataframe(p_s[["項目", "成績", "備註", "紀錄時間"]], use_container_width=True)
-        with cb:
-            st.write("**🚀 AI 診斷分析 (Analysis)**")
-            p_a = df_analysis[df_analysis["姓名"] == sel_name]
-            st.dataframe(p_a[["項目", "最終得分", "時間"]], use_container_width=True)
-    with r2:
-        st.subheader(f"👥 {sel_class} 班級成績全覽")
-        cl_view = df_scores[df_scores["班級"] == sel_class]
-        st.dataframe(cl_view, use_container_width=True)
-        st.download_button("📥 下載此班級報表 (CSV)", cl_view.to_csv(index=False).encode('utf-8-sig'), f"{sel_class}_report.csv")
-
-# --- [分頁 4：後台管理] ---
-with tab_manage:
-    st.subheader("🛠️ 系統後台即時維護")
-    with st.expander("1. 編輯測驗常模 (Norms_Settings)"):
-        en = st.data_editor(df_norms, num_rows="dynamic", use_container_width=True)
-        if st.button("💾 更新常模數據"): 
-            conn.update(worksheet="Norms_Settings", data=en)
-            st.cache_data.clear()
-            st.success("常模已同步！")
+        # 最終判定邏輯
+        if "🛑" not in report_text or manual_mode:
+            # 計算貢獻分
+            d_contrib = score_val * w_data
+            t_contrib = tech_score * w_tech
+            total_final = d_contrib + t_contrib
             
-    with st.expander("2. 編輯 AI 指標規準 (AI_Criteria)"):
-        ec = st.data_editor(df_criteria, num_rows="dynamic", use_container_width=True)
-        if st.button("💾 更新 AI 指標"): 
-            conn.update(worksheet="AI_Criteria", data=ec)
-            st.cache_data.clear()
-            st.success("AI 指標已同步！")
+            st.divider()
+            st.success("### 🏆 最終綜合判定成績")
             
-    with st.expander("3. 檢視 AI 診斷原始資料 (Analysis_Results)"):
-        st.dataframe(df_analysis, use_container_width=True)
+            # 清楚顯示公式
+            st.markdown(f"""
+            <div class="formula-box">
+                <b>🧮 綜合成績計算式：</b><br>
+                數據分 ({w_data_pct}%): {score_val} × {w_data} = <b>{d_contrib:.1f}</b><br>
+                技術分 ({w_tech_pct}%): {tech_score} × {w_tech} = <b>{t_contrib:.1f}</b><br>
+                🎯 最終總得分：<span style="font-size: 24px; color: #d9534f;"><b>{total_final:.1f} 分</b></span>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            if st.button("💾 確認無誤，儲存紀錄至雲端", use_container_width=True):
+                new_row = {
+                    "時間": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    "班級": sel_class, "座號": curr_stu['座號'], "姓名": sel_name,
+                    "項目": sel_item, "數據分數": str(score_val),
+                    "技術分數": str(tech_score), "最終得分": str(round(total_final, 2)),
+                    "AI診斷報告": report_text.replace("\n", " ")
+                }
+                # 更新
+                df_history = pd.concat([df_history, pd.DataFrame([new_row])], ignore_index=True).drop_duplicates(subset=["姓名", "項目"], keep="last")
+                conn.update(worksheet="Analysis_Results", data=df_history)
+                st.balloons(); st.success("✅ 紀錄已成功存入 Analysis_Results！")
+        else:
+            st.error("❌ 影像內容與技術指標不符。若 AI 判定有誤，請開啟左側『手動模式』覆核。")
+
+# --- 5. 底部：歷史紀錄查詢 ---
+st.divider()
+with st.expander("📚 查看個人歷史診斷紀錄"):
+    p_h = df_history[df_history["姓名"] == sel_name]
+    if not p_h.empty:
+        st.dataframe(p_h[["時間", "項目", "最終得分", "技術分數", "數據分數"]], use_container_width=True)
+    else:
+        st.write("目前尚無診斷紀錄。")
