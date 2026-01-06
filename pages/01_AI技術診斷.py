@@ -1,8 +1,4 @@
-if "password_correct" not in st.session_state or not st.session_state["password_correct"]:
-    st.warning("⚠️ 請先回首頁登入管理員帳號。")
-    st.stop()
-    
-import streamlit as st
+  import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import google.generativeai as genai
 import pandas as pd
@@ -19,6 +15,10 @@ if "GOOGLE_API_KEY" in st.secrets:
     MODEL_ID = "gemini-2.0-flash" 
 else:
     st.error("❌ 找不到 API_KEY，請在 Streamlit Secrets 設定。"); st.stop()
+
+if "password_correct" not in st.session_state or not st.session_state["password_correct"]:
+    st.warning("⚠️ 請先回首頁登入管理員帳號。")
+    st.stop()
 
 # --- 2. 登入權限管理 ---
 if "password_correct" not in st.session_state: st.session_state["password_correct"] = False
