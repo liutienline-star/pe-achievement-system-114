@@ -155,7 +155,7 @@ elif mode == "114年體適能":
             c1, c2 = st.columns(2)
             final_score, fmt = f"{c1.number_input('分', 0, 20, 8):02d}:{c2.number_input('秒', 0, 59, 0):02d}.0", "秒數 (00:00.0)"
         else:
-            val = st.number_input("🔢 數據", 0.0, 500.0, 0.0)
+            val = st.number_input("🔢 數據", 0.0, 1050.0, 0.0)
             final_score, fmt = clean_numeric_string(val), "次數/公分"
         final_medal = judge_medal(test_item, stu['性別'], stu['年齡'], final_score)
         note = ""
